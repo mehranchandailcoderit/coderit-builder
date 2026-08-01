@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: coderit-build-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: GITHUB_BUILD_TOKEN
+        sync: false
+      - key: GITHUB_BUILDER_REPO
+        sync: false
+      - key: GITHUB_BUILDER_BASE_BRANCH
+        value: main
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: BUILD_API_KEY
+        sync: false
