@@ -37,12 +37,24 @@ const BASE_BRANCH = process.env.GITHUB_BUILDER_BASE_BRANCH || 'main';
 const CODEMAGIC_API = 'https://api.codemagic.io';
 const CODEMAGIC_TOKEN = process.env.CODEMAGIC_API_TOKEN;
 const CODEMAGIC_APP_ID = process.env.CODEMAGIC_APP_ID;
-// Optional — only needed if the builder repo's codemagic.yaml defines
-// more than one workflow and the default (first) one isn't the right
-// one. Leave unset to let Codemagic use the app's default workflow...
-// actually Codemagic's API requires a workflowId, so this one is
-// effectively required; documented clearly in the README.
-const CODEMAGIC_WORKFLOW_ID = process.env.CODEMAGIC_WORKFLOW_ID;
+// Flutter workflow id (existing behavior). Kept as a separate env var
+// so old deployments that only set CODEMAGIC_WORKFLOW_ID keep working.
+const CODEMAGIC_WORKFLOW_ID_FLUTTER =
+  process.env.CODEMAGIC_WORKFLOW_ID_FLUTTER || process.env.CODEMAGIC_WORKFLOW_ID;
+// Native Android (Java/Kotlin + Gradle, no pubspec.yaml) workflow id.
+// Must match a workflow key defined in the builder repo's codemagic.yaml,
+// e.g. "native-android-workflow".
+const CODEMAGIC_WORKFLOW_ID_NATIVE =
+  process.env.CODEMAGIC_WORKFLOW_ID_NATIVE || 'native-android-workflow';
+
+/**
+ * Picks which Codemagic workflow id to use based on detected project type.
+ */
+function workflowIdForProjectType(projectType) {
+  return projectType === 'native-android'
+    ? CODEMAGIC_WORKFLOW_ID_NATIVE
+    : CODEMAGIC_WORKFLOW_ID_FLUTTER;
+}
 
 function assertGithubConfigured() {
   if (!GITHUB_TOKEN || !GITHUB_REPO) {
@@ -52,10 +64,10 @@ function assertGithubConfigured() {
   }
 }
 
-function assertCodemagicConfigured() {
-  if (!CODEMAGIC_TOKEN || !CODEMAGIC_APP_ID || !CODEMAGIC_WORKFLOW_ID) {
+function assertCodemagicConfigured(workflowId) {
+  if (!CODEMAGIC_TOKEN || !CODEMAGIC_APP_ID || !workflowId) {
     throw new Error(
-      'CODEMAGIC_API_TOKEN / CODEMAGIC_APP_ID / CODEMAGIC_WORKFLOW_ID not set on the server. See README.md.'
+      'CODEMAGIC_API_TOKEN / CODEMAGIC_APP_ID / workflow id not set on the server. See README.md.'
     );
   }
 }
@@ -99,6 +111,8 @@ async function pushZipToBuildBranch(zipBuffer, buildId) {
   const entries = zip.getEntries().filter((e) => !e.isDirectory);
   if (entries.length === 0) throw new Error('Uploaded zip has no files.');
 
+  const projectType = detectProjectType(entries);
+
   const treeEntries = [];
   const CONCURRENCY = 6;
   for (let i = 0; i < entries.length; i += CONCURRENCY) {
@@ -133,7 +147,29 @@ async function pushZipToBuildBranch(zipBuffer, buildId) {
     sha: commit.sha,
   });
 
-  return commit.sha;
+  return { commitSha: commit.sha, projectType };
+}
+
+/**
+ * Looks at the uploaded zip's file list (paths only, no content read
+ * needed) to decide whether this is a Flutter project or a native
+ * Android (Java/Kotlin + Gradle, no Dart) project:
+ *   - `pubspec.yaml` at (or near) the root -> Flutter
+ *   - otherwise, presence of `build.gradle`/`build.gradle.kts` and
+ *     `AndroidManifest.xml` -> native Android
+ *   - falls back to 'flutter' if nothing matches, preserving old
+ *     behavior for any project shape we haven't seen yet.
+ */
+function detectProjectType(entries) {
+  const paths = entries.map((e) => e.entryName.replace(/\\/g, '/'));
+  const hasPubspec = paths.some((p) => /(^|\/)pubspec\.yaml$/.test(p));
+  if (hasPubspec) return 'flutter';
+
+  const hasGradle = paths.some((p) => /(^|\/)build\.gradle(\.kts)?$/.test(p));
+  const hasManifest = paths.some((p) => /(^|\/)AndroidManifest\.xml$/.test(p));
+  if (hasGradle && hasManifest) return 'native-android';
+
+  return 'flutter';
 }
 
 /**
@@ -141,12 +177,13 @@ async function pushZipToBuildBranch(zipBuffer, buildId) {
  * returns Codemagic's own build id (different from CoderIT's buildId —
  * needed for every subsequent status/artifact call).
  */
-async function startCodemagicBuild(buildId) {
-  assertCodemagicConfigured();
+async function startCodemagicBuild(buildId, projectType) {
+  const workflowId = workflowIdForProjectType(projectType);
+  assertCodemagicConfigured(workflowId);
   const api = cm();
   const { data } = await api.post('/builds', {
     appId: CODEMAGIC_APP_ID,
-    workflowId: CODEMAGIC_WORKFLOW_ID,
+    workflowId,
     branch: `build/${buildId}`,
   });
   if (!data.buildId) throw new Error('Codemagic did not return a buildId when starting the build.');
@@ -285,4 +322,5 @@ module.exports = {
   waitForCodemagicBuild,
   fetchApkFromBuild,
   deleteBuildBranch,
+  detectProjectType,
 };
