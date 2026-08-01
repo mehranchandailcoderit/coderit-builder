@@ -5,8 +5,6 @@ workflows:
     instance_type: linux_x2
     environment:
       flutter: stable
-      android_signing:
-        - keystore_reference   # optional: only if you set up code signing in Codemagic UI
       vars:
         PACKAGE_NAME: "com.chandailx.coderIT"
     scripts:
@@ -22,7 +20,7 @@ workflows:
     publishing:
       email:
         recipients:
-          - your-email@example.com   # apna email daal do, ya section hata do
+          - your-email@example.com
         notify:
           success: false
           failure: true
