@@ -108,10 +108,10 @@ async function runBuildAsync(buildId, zipBuffer) {
   };
 
   update('pushing', 'Pushing code to build repo…');
-  await pushZipToBuildBranch(zipBuffer, buildId);
+  const { projectType } = await pushZipToBuildBranch(zipBuffer, buildId);
 
-  update('queued', 'Starting Codemagic build…');
-  const cmBuildId = await startCodemagicBuild(buildId);
+  update('queued', `Starting Codemagic build (${projectType})…`);
+  const cmBuildId = await startCodemagicBuild(buildId, projectType);
 
   const finishedBuild = await waitForCodemagicBuild(cmBuildId, {
     onUpdate: (coarseState, codemagicStatus, newStepLines) => {
